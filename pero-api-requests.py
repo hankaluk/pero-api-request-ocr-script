@@ -14,7 +14,7 @@ headers1 = {"api-key": API_KEY}  # header for get_engines
 headers2 = {"api-key": API_KEY, "Content-Type": "application/json"}  # header for data processing
 
 # data path:
-data_path = "OCRs/ocr_data.json"
+data_path = "OCRs/ocr_ln.json"
 # format of the result
 format1 = "txt"  # or alto or page(returns page xml)
 
@@ -57,8 +57,8 @@ def request_status(request_id, request_name1):
         if response["request_status"][f"{request_name1}"]["state"] == "PROCESSED":
             processed = True
         else:
-            print(f'Request {request_name1} is {response["request_status"][f"{request_name1}"]["state"]}')
-        time.sleep(10)
+            # print(f'Request {request_name1} is {response["request_status"][f"{request_name1}"]["state"]}')
+            time.sleep(5)
     return True
 
 
@@ -75,6 +75,8 @@ def get_results(request_id, request_name2, format2):
 
 
 def main():
+    start = time.time()
+    finish = 0
     # Choose one of the options, comment the other one:
 
     # OPTION 1 (if you already have a request id):
@@ -83,8 +85,12 @@ def main():
     # OPTION 2 (a fresh new request):
     result_request_id = process_request()
     for request_name in request_names:
-        if request_status(result_request_id, request_name):
-            get_results(result_request_id, request_name, format1)
+        with open("OCRs/time_logs.txt", "a", encoding="utf-8") as logs:
+            if request_status(result_request_id, request_name):
+                get_results(result_request_id, request_name, format1)
+                finish = time.time()
+                logs.write(f"{request_name} finished in {round(finish - start,2)} s.\n")
+                start = finish
 
 
 main()
