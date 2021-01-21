@@ -1,3 +1,8 @@
 OCRs/
+JSONs/
+Results/
 .idea
 API_KEY
+docker-compose.yml
+log_file.log
+processing_logs.log
