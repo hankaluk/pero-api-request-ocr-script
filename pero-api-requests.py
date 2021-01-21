@@ -64,10 +64,12 @@ def request_status(request_id):
                 processed = True
             else:
                 # time.sleep(3600)  # 1 hour wait - needs to be tested
-                time.sleep(1200)    # 20 minute wait for 100 images?
+                # time.sleep(1200)    # 20 minute wait for 100 images?
+                time.sleep(600)
     return processed
 
 
+# getting the resulting ocrs
 def get_results(request_id, file_name, result_format):
     unprocessed_file = ""
     url = f"{SERVER_URL}/download_results/{request_id}/{file_name}/{result_format}"
@@ -132,7 +134,7 @@ def main():
     finish = time.time()
     logger_main.info("Script finished.")
     total_time = int(finish-start)
-    logger_main.info(f"All files were processed in {total_time//3600} h, {total_time//60} m and {total_time%60} s ({total_time} s).")
+    logger_main.info(f"All files were processed in {total_time//3600} h, {(total_time%3600)//60} m and {total_time%60} s ({total_time} s).")
 
 
 # TODO: enter data
