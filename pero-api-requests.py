@@ -90,7 +90,7 @@ def main():
 
     # downloading unprocessed files
     while unprocessed_files:
-        logger_main.info(unprocessed_files)
+        result_logger.info(unprocessed_files)
         time.sleep(1800) # wait for processing the files
         for file in unprocessed_files:
             result = download_results(session, output_dir, request_id, file, format_txt, result_logger)
