@@ -1,144 +1,185 @@
-# Based on: https://app.swaggerhub.com/apis-docs/LachubCz/PERO-API/1.0.1#/ by Michal Hradiš.
-# For running the script you need to get the api key.
-# First enter the link with data.
-# Second enter the resulting format (alto, txt, page)
-
-import os
-import requests
 import json
-import time
 import logging
+import os
+import time
+import requests
 
 
 SERVER_URL = os.environ.get('SERVER_URL')
 API_KEY = os.environ.get('API_KEY')
-headers1 = {"api-key": API_KEY}  # header for get_engines
-headers2 = {"api-key": API_KEY, "Content-Type": "application/json"}  # header for data processing
+INPUT_FILE = os.environ.get('INPUT_FILE')
+headers = {"api-key": API_KEY, "Content-Type": "application/json"}
 
-# logs settings
+# logger
+file_handler = logging.FileHandler('main_logs.log')
 formatter = logging.Formatter("%(asctime)s:%(name)s:%(levelname)s:%(message)s")
-logger = logging.getLogger("get_results")
-logger.setLevel(logging.INFO)
-file_handler = logging.FileHandler('/app/processing_logs.log')
 file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
-
 logger_main = logging.getLogger(__name__)
-logger_main.setLevel(logging.INFO)
-file_handler_main = logging.FileHandler('/app/log_file.log')
-file_handler_main.setFormatter(formatter)
-logger_main.addHandler(file_handler_main)
-
-
-# returns list of available engines - not part of the processing of images
-def get_engines():
-    r = requests.get(f"{SERVER_URL}/get_engines", headers=headers1)
-    return r.text
-
-
-# print(get_engines())
-
-
-# function for creating processing request
-def process_request(data):
-    r = requests.post(f"{SERVER_URL}/post_processing_request", json=data, headers=headers2)
-    response = r.json()
-    if r.status_code == 200:
-        response_request_id = response.get('request_id')
-        logger_main.info(f"Request ID: {response_request_id}")
-        return response_request_id
-    else:
-        message = response.get('message')
-        logger_main.error(f"Processing request error: {r.status_code} {message}")
-        return ""
-
-
-# getting the request status
-def request_status(request_id):
-    processed = False
-    while not processed:
-        r = requests.get(f"{SERVER_URL}/request_status/{request_id}", headers=headers2)
-        response = r.json().get('request_status').values()
-        for value in response:
-            if 'PROCESSED' in value.get('state'):
-                processed = True
-            else:
-                # time.sleep(3600)  # 1 hour wait - needs to be tested
-                # time.sleep(1200)    # 20 minute wait for 100 images?
-                time.sleep(600)
-    return processed
-
-
-# getting the resulting ocrs
-def get_results(request_id, file_name, result_format):
-    unprocessed_file = ""
-    url = f"{SERVER_URL}/download_results/{request_id}/{file_name}/{result_format}"
-    file_path = f"/app/Results/{result_format}/{file_name}"
-    if result_format == "alto" or result_format == "txt" or result_format == "page":
-        r = requests.get(url, headers=headers2)
-        if r.status_code == 200:
-            with open(file_path, "w", encoding="utf-8") as result_file:
-                result_file.write(r.text)
-        else:
-            unprocessed_file = file_name
-            logger.info(f"File {unprocessed_file} was not processed: {r.status_code} {r.json().get('message')}")
-    else:
-        logger_main.error("Wrong format entered.")
-        exit()
-    return unprocessed_file
+logger_main.setLevel(logging.DEBUG)
+logger_main.addHandler(file_handler)
 
 
 def main():
-    logger_main.info("Script started.")
-    request_names = []
-    status = False
+    format_txt = "txt"
+    format_alto = "alto"
 
-    with open(data_path, "r", encoding="utf-8") as file:
-        data = json.load(file)
-    if bool(data):
-        for key in data.get('images').keys():
-            request_names.append(key)
-        logger_main.info("Data load: Successful.")
-    else:
-        logger_main.error("Data load: Error loading JSON file.")
-        exit()
+    # loading the json file into a dictionary
+    file_names = []
+    try:
+        with open(INPUT_FILE, "r", encoding="utf-8") as input_file:
+            try:
+                data = json.load(input_file)
+                for key in data.get("images").keys():
+                    file_names.append(key)
+            except json.JSONDecodeError as err:
+                logger_main.error(f"Error occurred: {err}")
+                exit(1)
+            except KeyError as err:
+                logger_main.error(f"Error occurred: {err}")
+                exit(1)
+    except FileNotFoundError as err:
+        logger_main.error(f"Error occurred: {err}")
+        exit(1)
+    except Exception as err:
+        logger_main.error(f"Error occurred: {err}")
+        exit(1)
 
+    # create a destination directory
+    output_dir = create_destination()
+
+    # setting timer
+    logger_main.info("Processing started.")
     start = time.time()
 
-    # Choose one of the options, comment the other one:
-    # OPTION 1 (new request):
-    result_request_id = process_request(data)
+    # send data for processing and get request id in return
+    request_id = ""
+    while not request_id:
+        request_id = post_processing_request(data)
+    # time.sleep(10800) # 3 hour wait for the processing of 1500-2000 images in one request
+    time.sleep(60)
 
-    # OPTION 2 (if you already have a request id):
-    # result_request_id = "34f6ae37-6eb5-42e8-864a-ef56a0a07e6d"
+    # create session for long processing
+    session = requests.Session()
 
-    if result_request_id != "":
-        status = request_status(result_request_id)
+    # request the status of processing
+    failed_files = []
+    unprocessed_files = []
+    processed = False
+    while not processed:
+        processed = request_status(session, request_id)
+        time.sleep(600)
 
-    control_group = []
-    if status:
-        for request_name in request_names:
-            control_group_item = get_results(result_request_id, request_name, "txt")
-            if control_group_item:
-                control_group.append(control_group_item)
+    # download logger
+    file_handler_result = logging.FileHandler('result_download.log')
+    file_handler_result.setFormatter(formatter)
+    result_logger = logging.getLogger("result_logger")
+    result_logger.setLevel(logging.INFO)
+    result_logger.addHandler(file_handler_result)
+
+    # downloading results
+    for name in file_names:
+        result = download_results(session, output_dir, request_id, name, format_txt, result_logger)
+        if result == "PROCESSED":
+            download_results(session, output_dir, request_id, name, format_alto, result_logger)
+        else:
+            processing = check_status(session, request_id, result)
+            if processing == 'PROCESSING_FAILED':
+                failed_files.append(name)
             else:
-                get_results(result_request_id, request_name, "alto")
+                unprocessed_files.append(name)
 
-    while control_group:    # while control_group list has any items
-        for member in control_group:
-            control_member = get_results(result_request_id, member, "txt")
-            if not control_member:
-                control_group.remove(control_member)
-                get_results(result_request_id, member, "alto")
+    # downloading unprocessed files
+    while unprocessed_files:
+        logger_main.info(unprocessed_files)
+        time.sleep(1800) # wait for processing the files
+        for file in unprocessed_files:
+            result = download_results(session, output_dir, request_id, file, format_txt, result_logger)
+            if result == "PROCESSED":
+                download_results(session, output_dir, request_id, file, format_alto, result_logger)
+                unprocessed_files.remove(file)
+
+    if not failed_files:
+        logger_main.info(f"Processing failed for following files: {failed_files}")
+    else:
+        logger_main.info(f"None of the files failed to be processed.")
 
     finish = time.time()
-    logger_main.info("Script finished.")
     total_time = int(finish-start)
-    logger_main.info(f"All files were processed in {total_time//3600} h, {(total_time%3600)//60} m and {total_time%60} s ({total_time} s).")
+    logger_main.info(f"Processing finished, "
+                     f"total processing time: {total_time//3600} h,"
+                     f"{(total_time%3600)//60} m,"
+                     f"{total_time%60} s.")
 
 
-# TODO: enter data
-data_path = "/app/JSONs/data.json"
-# Right now the format is set to create txt and alto
-# result_format = "txt"  # or alto or page(returns page xml)
+# create the destination directories
+def create_destination():
+    output_dir = os.path.basename(INPUT_FILE).split(".")[0]
+    output_main = "results"
+    output_path_txt = os.path.join(output_main, output_dir, "txt")
+    output_path_alto = os.path.join(output_main, output_dir, "alto")
+    if not os.path.isdir(output_path_txt):
+        os.makedirs(output_path_txt)
+        logger_main.info(f"{output_path_txt} was successfully created.")
+    else:
+        logger_main.info(f"{output_path_txt} already exists.")
+    if not os.path.isdir(output_path_alto):
+        os.makedirs(output_path_alto)
+        logger_main.info(f"{output_path_alto} was successfully created.")
+    else:
+        logger_main.info(f"{output_path_alto} already exists.")
+    return os.path.join(output_main, output_dir)
+
+
+# sends data for processing
+def post_processing_request(data):
+    url = SERVER_URL + "post_processing_request"
+    response = requests.post(url, json=data, headers=headers)
+    # logger_main.info(f"Post processing response: {response}: {response.text}")
+    response_dict = response.json()
+    if response.status_code == 200 and response_dict.get('status') == "success":
+        request_id = response_dict.get('request_id')
+        logger_main.info(f"Request ID: {request_id}")
+        return request_id
+    else:
+        logger_main.error(f"Processing request ended with code {response.status_code}."
+                          f"{response_dict.get('message')}")
+
+
+def request_status(session, request_id):
+    url = SERVER_URL + "request_status/" + request_id
+    response = session.get(url, headers=headers)
+    response_dict = response.json()
+    dict_values = response_dict.get('request_status').values()
+    for value in dict_values:
+        if 'PROCESSED' in value.get('state'):
+            return True
+        else:
+            logger_main.info(f"{response.status_code} : {response_dict.get('status')}"
+                             f" : {response_dict.get('message')}")
+            return False
+
+
+def download_results(session, output_dir, request_id, file_name, result_format, result_logger):
+    url = os.path.join(SERVER_URL, "download_results", request_id, file_name, result_format)
+    file_path = os.path.join(output_dir, result_format, file_name)
+    response = session.get(url, headers=headers)
+    if response.status_code == 200:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(response.text)
+        result_logger.info(f"{file_name} is processed.")
+        return "PROCESSED"
+    else:
+        response_dict = response.json()
+        result_logger.info(f"{file_name} ended with code {response.status_code} : "
+                           f"{response_dict.get('status')} : {response_dict.get('message')}")
+        return file_name
+
+
+def check_status(session, request_id, file_name):
+    url = SERVER_URL + "request_status/" + request_id
+    response = session.get(url, headers=headers)
+    file_status = response.json().get('request_status').get(file_name).get('state')
+    return file_status
+
+
 main()
